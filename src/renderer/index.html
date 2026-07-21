@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Constrain what the editor chrome itself may load. The <webview> guest
+         is governed separately by Electron's webview partition/guards. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; worker-src 'self' blob:;"
+    />
+    <title>Brainstorm</title>
+    <!-- Notepad favicon (inline SVG data URI) -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='3' width='15' height='18' rx='2' fill='%23d7ba7d'/%3E%3Crect x='4' y='3' width='15' height='4' rx='2' fill='%23c9a95f'/%3E%3Cg stroke='%235a4a1f' stroke-width='1.4' stroke-linecap='round'%3E%3Cline x1='8' y1='10' x2='15' y2='10'/%3E%3Cline x1='8' y1='13' x2='15' y2='13'/%3E%3Cline x1='8' y1='16' x2='13' y2='16'/%3E%3C/g%3E%3Cg stroke='%238a7333' stroke-width='1.6' stroke-linecap='round'%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='12' y1='2' x2='12' y2='6'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3C/g%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
