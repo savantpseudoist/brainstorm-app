@@ -1,4 +1,24 @@
+import { useMemo, useState } from 'react'
+import type { BrainstormSession, SessionSort } from '@shared/types'
 import { useAppStore } from '../store/appStore'
+
+const SORT_LABELS: Record<SessionSort, string> = {
+  recent: 'Recently updated',
+  alpha: 'Title (A–Z)',
+  created: 'Newest created'
+}
+
+function sortSessions(list: BrainstormSession[], sort: SessionSort): BrainstormSession[] {
+  const arr = [...list]
+  arr.sort((a, b) => {
+    // Starred sessions always float to the top.
+    if (!!a.starred !== !!b.starred) return a.starred ? -1 : 1
+    if (sort === 'alpha') return (a.title || '').localeCompare(b.title || '')
+    if (sort === 'created') return b.createdAt - a.createdAt
+    return b.updatedAt - a.updatedAt
+  })
+  return arr
+}
 
 export default function SessionList({ width }: { width: number }): JSX.Element {
   const allSessions = useAppStore((s) => s.sessions)
@@ -7,15 +27,36 @@ export default function SessionList({ width }: { width: number }): JSX.Element {
   const newSession = useAppStore((s) => s.newSession)
   const selectSession = useAppStore((s) => s.selectSession)
   const deleteSession = useAppStore((s) => s.deleteSession)
+  const toggleStarSession = useAppStore((s) => s.toggleStarSession)
+  const sort = useAppStore((s) => s.settings.sessionSort ?? 'recent')
+  const setSettings = useAppStore((s) => s.setSettings)
 
-  // Only brainstorms in the loaded work folder.
-  const sessions = allSessions.filter((s) => s.folderId === activeFolderId)
+  const [query, setQuery] = useState('')
+
+  const sessions = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const scoped = allSessions.filter((s) => s.folderId === activeFolderId)
+    const matched = q
+      ? scoped.filter(
+          (s) =>
+            s.title.toLowerCase().includes(q) ||
+            s.notes.toLowerCase().includes(q) ||
+            s.ideas.some((i) => i.text.toLowerCase().includes(q))
+        )
+      : scoped
+    return sortSessions(matched, sort)
+  }, [allSessions, activeFolderId, query, sort])
+
+  const cycleSort = (): void => {
+    const order: SessionSort[] = ['recent', 'alpha', 'created']
+    const next = order[(order.indexOf(sort) + 1) % order.length]
+    setSettings({ sessionSort: next })
+  }
 
   return (
     <div className="sidebar" style={{ width }}>
       <div className="sidebar-header">
         <span className="app-logo" aria-hidden="true">
-          {/* Notepad logo */}
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             <rect x="4" y="3" width="15" height="18" rx="2" fill="#d7ba7d" />
             <rect x="4" y="3" width="15" height="4" rx="2" fill="#c9a95f" />
@@ -28,25 +69,62 @@ export default function SessionList({ width }: { width: number }): JSX.Element {
           </svg>
           <span>Brainstorms</span>
         </span>
-        <button onClick={() => newSession()} title="New brainstorm (Ctrl+N)">
+        <button className="sidebar-new" onClick={() => newSession()} title="New brainstorm (Ctrl+N)">
           ＋
         </button>
       </div>
+
+      <div className="sidebar-tools">
+        <div className="sidebar-search">
+          <span className="sidebar-search-icon" aria-hidden="true">
+            ⌕
+          </span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search brainstorms…"
+            spellCheck={false}
+          />
+          {query && (
+            <button className="sidebar-search-clear" onClick={() => setQuery('')} title="Clear">
+              ×
+            </button>
+          )}
+        </div>
+        <button className="sidebar-sort" onClick={cycleSort} title="Change sort order">
+          ⇅ {SORT_LABELS[sort]}
+        </button>
+      </div>
+
       <div className="session-list">
         {sessions.length === 0 && (
-          <div className="tree-empty">No brainstorms yet. Hit ＋ to start.</div>
+          <div className="tree-empty">
+            {query ? 'No brainstorms match your search.' : 'No brainstorms yet. Hit ＋ to start.'}
+          </div>
         )}
         {sessions.map((s) => (
           <div
             key={s.id}
-            className={`session-row${s.id === activeSessionId ? ' active' : ''}`}
+            className={`session-row${s.id === activeSessionId ? ' active' : ''}${
+              s.starred ? ' starred' : ''
+            }`}
             onClick={() => selectSession(s.id)}
             title={s.title}
           >
+            <button
+              className={`session-star${s.starred ? ' on' : ''}`}
+              title={s.starred ? 'Unpin' : 'Pin to top'}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleStarSession(s.id)
+              }}
+            >
+              {s.starred ? '★' : '☆'}
+            </button>
             <div className="session-main">
               <div className="session-title">{s.title || 'Untitled brainstorm'}</div>
               <div className="session-meta">
-                {s.ideas.length} idea{s.ideas.length === 1 ? '' : 's'} ·{' '}
+                {s.ideas.length} idea{s.ideas.length === 1 ? '' : 's'} · {s.messages.length} msg ·{' '}
                 {new Date(s.updatedAt).toLocaleDateString()}
               </div>
             </div>
@@ -55,7 +133,7 @@ export default function SessionList({ width }: { width: number }): JSX.Element {
               title="Delete brainstorm"
               onClick={(e) => {
                 e.stopPropagation()
-                deleteSession(s.id)
+                if (window.confirm(`Delete "${s.title || 'Untitled brainstorm'}"?`)) deleteSession(s.id)
               }}
             >
               ×

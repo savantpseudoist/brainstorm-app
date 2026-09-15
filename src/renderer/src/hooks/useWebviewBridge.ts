@@ -15,6 +15,8 @@ export interface UseWebviewBridgeResult {
   sendOperation: (payload: string) => void
   onMessage: (callback: (data: InboundPayload) => void) => () => void
   onUrl: (callback: (url: string) => void) => () => void
+  onAddToNotes: (callback: (text: string) => void) => () => void
+  onSaveAsIdea: (callback: (text: string) => void) => () => void
   navigateTo: (url: string) => void
   navigateAndWait: (url: string, timeoutMs?: number) => Promise<void>
 }
@@ -36,6 +38,8 @@ export function useWebviewBridge(_config?: DomBridgeConfig): UseWebviewBridgeRes
   const [isReady, setIsReady] = useState(false)
   const messageListenersRef = useRef<Set<(data: InboundPayload) => void>>(new Set())
   const urlListenersRef = useRef<Set<(url: string) => void>>(new Set())
+  const addToNotesListenersRef = useRef<Set<(text: string) => void>>(new Set())
+  const saveAsIdeaListenersRef = useRef<Set<(text: string) => void>>(new Set())
 
   // Ref callback to capture <webview> DOM element attachment
   const webviewRef = useCallback((node: WebviewElement | null) => {
@@ -82,6 +86,12 @@ export function useWebviewBridge(_config?: DomBridgeConfig): UseWebviewBridgeRes
       } else if (event.channel === 'dom-bridge:url') {
         const url: string = event.args[0]
         urlListenersRef.current.forEach((cb) => cb(url))
+      } else if (event.channel === 'dom-bridge:add-to-notes') {
+        const text: string = event.args[0]
+        addToNotesListenersRef.current.forEach((cb) => cb(text))
+      } else if (event.channel === 'dom-bridge:save-as-idea') {
+        const text: string = event.args[0]
+        saveAsIdeaListenersRef.current.forEach((cb) => cb(text))
       } else if (event.channel === 'dom-bridge:error') {
         console.warn('[useWebviewBridge] Received error from webview bridge:', event.args[0])
       }
@@ -157,6 +167,20 @@ export function useWebviewBridge(_config?: DomBridgeConfig): UseWebviewBridgeRes
     }
   }, [])
 
+  const onAddToNotes = useCallback((callback: (text: string) => void): (() => void) => {
+    addToNotesListenersRef.current.add(callback)
+    return () => {
+      addToNotesListenersRef.current.delete(callback)
+    }
+  }, [])
+
+  const onSaveAsIdea = useCallback((callback: (text: string) => void): (() => void) => {
+    saveAsIdeaListenersRef.current.add(callback)
+    return () => {
+      saveAsIdeaListenersRef.current.delete(callback)
+    }
+  }, [])
+
   /**
    * Navigates the guest webview to a specific conversation URL (used to reopen a
    * saved session). No-op if we're already there.
@@ -211,6 +235,8 @@ export function useWebviewBridge(_config?: DomBridgeConfig): UseWebviewBridgeRes
     sendOperation,
     onMessage,
     onUrl,
+    onAddToNotes,
+    onSaveAsIdea,
     navigateTo,
     navigateAndWait
   }

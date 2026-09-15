@@ -29,6 +29,7 @@ export interface RecoveryProgress {
 export interface AiActionRequest {
   sessionId: string
   prompt: string
+  originalText?: string
   nonce: number
 }
 
@@ -87,8 +88,19 @@ interface AppState {
 
   // AI action requests from the notes context menu.
   aiActionRequest: AiActionRequest | null
-  requestAiAction: (sessionId: string, prompt: string) => void
+  requestAiAction: (sessionId: string, prompt: string, originalText?: string) => void
   clearAiActionRequest: () => void
+
+  // Inline AI suggestions for NotesEditor
+  inlineSuggestion: import('@shared/types').InlineSuggestion | null
+  setInlineSuggestion: (suggestion: import('@shared/types').InlineSuggestion | null) => void
+  clearInlineSuggestion: () => void
+
+  // Consolidation State
+  consolidationState: import('@shared/types').ConsolidationState | null
+  startConsolidation: (sessionId: string) => void
+  advanceConsolidation: () => void
+  cancelConsolidation: () => void
 
   // --- session lifecycle ---
   setSessions: (sessions: BrainstormSession[]) => void
@@ -96,10 +108,12 @@ interface AppState {
   selectSession: (id: string) => void
   deleteSession: (id: string) => void
   renameSession: (id: string, title: string) => void
+  toggleStarSession: (id: string) => void
   setNotes: (id: string, notes: string) => void
   addIdea: (id: string, idea: Omit<Idea, 'id' | 'createdAt'>) => void
   removeIdea: (sessionId: string, ideaId: string) => void
   addMessage: (id: string, message: ChatMessage) => void
+  toggleBookmarkMessage: (sessionId: string, messageIndex: number) => void
   clearMessages: (id: string) => void
   setChatUrl: (id: string, chatUrl: string) => void
 
@@ -123,14 +137,14 @@ function touchSession(
   return sessions.map((s) => (s.id === id ? { ...fn(s), updatedAt: Date.now() } : s))
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   folders: [],
   activeFolderId: null,
   // Mandatory first view: the folder selector is open until a folder is chosen.
   folderModalOpen: true,
   sessions: [],
   activeSessionId: null,
-  settings: { theme: 'dark', fontSize: 14, aiPanelWidth: 420, sidebarWidth: 260 },
+  settings: { theme: 'dark', fontSize: 14, aiPanelWidth: 420, sidebarWidth: 260, sessionSort: 'recent' },
   aiPanelVisible: true,
   commandPaletteOpen: false,
   pendingResponses: [],
@@ -201,6 +215,13 @@ export const useAppStore = create<AppState>((set) => ({
   renameSession: (id, title) =>
     set((state) => ({ sessions: touchSession(state.sessions, id, (s) => ({ ...s, title })) })),
 
+  // Star/pin toggle. Does NOT bump updatedAt — pinning is organisational, not
+  // an edit, so it shouldn't reorder a "recent"-sorted list.
+  toggleStarSession: (id) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === id ? { ...s, starred: !s.starred } : s))
+    })),
+
   setNotes: (id, notes) =>
     set((state) => ({ sessions: touchSession(state.sessions, id, (s) => ({ ...s, notes })) })),
 
@@ -225,6 +246,16 @@ export const useAppStore = create<AppState>((set) => ({
       sessions: touchSession(state.sessions, id, (s) => ({
         ...s,
         messages: [...s.messages, message]
+      }))
+    })),
+
+  toggleBookmarkMessage: (sessionId, messageIndex) =>
+    set((state) => ({
+      sessions: touchSession(state.sessions, sessionId, (s) => ({
+        ...s,
+        messages: s.messages.map((m, idx) =>
+          idx === messageIndex ? { ...m, bookmarked: !m.bookmarked } : m
+        )
       }))
     })),
 
@@ -253,7 +284,94 @@ export const useAppStore = create<AppState>((set) => ({
   clearRecoveryRequest: () => set({ recoveryRequest: null }),
   setRecovery: (recovery) => set({ recovery }),
 
-  requestAiAction: (sessionId, prompt) =>
-    set({ aiActionRequest: { sessionId, prompt, nonce: Date.now() } }),
-  clearAiActionRequest: () => set({ aiActionRequest: null })
+  requestAiAction: (sessionId, prompt, originalText) =>
+    set({ aiActionRequest: { sessionId, prompt, originalText, nonce: Date.now() } }),
+  clearAiActionRequest: () => set({ aiActionRequest: null }),
+
+  inlineSuggestion: null,
+  setInlineSuggestion: (suggestion) => set({ inlineSuggestion: suggestion }),
+  clearInlineSuggestion: () => set({ inlineSuggestion: null }),
+
+  consolidationState: null,
+  startConsolidation: (sessionId) => {
+    const session = get().sessions.find((s) => s.id === sessionId)
+    if (!session || !session.notes.trim()) return
+
+    const notes = session.notes.trim()
+    const words = notes.split(/\s+/).filter(Boolean)
+
+    if (words.length < 5000) {
+      const prompt = `I want to consolidate my notes. Here is the raw text. Please reformat it professionally without losing any information: \n\n${notes}`
+      set({
+        consolidationState: {
+          sessionId,
+          active: true,
+          chunks: [prompt],
+          currentChunkIndex: 0,
+          totalChunks: 1
+        }
+      })
+      get().requestAiAction(sessionId, prompt)
+    } else {
+      // Split into ~4500 word chunks
+      const paragraphs = notes.split(/\n\n+/)
+      const rawChunks: string[] = []
+      let current = ''
+      let currentWordCount = 0
+
+      for (const p of paragraphs) {
+        const count = p.split(/\s+/).filter(Boolean).length
+        if (currentWordCount + count > 4500 && current.trim()) {
+          rawChunks.push(current.trim())
+          current = p
+          currentWordCount = count
+        } else {
+          current = current ? `${current}\n\n${p}` : p
+          currentWordCount += count
+        }
+      }
+      if (current.trim()) {
+        rawChunks.push(current.trim())
+      }
+
+      const total = rawChunks.length
+      const prompts = rawChunks.map((chunk, idx) => {
+        const partNum = idx + 1
+        if (partNum < total) {
+          return `I'm going to give you my notes in chunks so we can consolidate them. This is part ${partNum} of ${total}. Just read it and reply 'waiting'. \n\n${chunk}`
+        } else {
+          return `Here is the final part ${partNum} of ${total}. That's the last of it. Now, take all the parts I just sent and reformat the entire text into a clean, professional document. Do not lose any information. \n\n${chunk}`
+        }
+      })
+
+      set({
+        consolidationState: {
+          sessionId,
+          active: true,
+          chunks: prompts,
+          currentChunkIndex: 0,
+          totalChunks: total
+        }
+      })
+      get().requestAiAction(sessionId, prompts[0])
+    }
+  },
+
+  advanceConsolidation: () => {
+    const cs = get().consolidationState
+    if (!cs || !cs.active) return
+    const nextIdx = cs.currentChunkIndex + 1
+    if (nextIdx < cs.totalChunks) {
+      const nextPrompt = cs.chunks[nextIdx]
+      set({
+        consolidationState: {
+          ...cs,
+          currentChunkIndex: nextIdx
+        }
+      })
+      get().requestAiAction(cs.sessionId, nextPrompt)
+    }
+  },
+
+  cancelConsolidation: () => set({ consolidationState: null })
 }))

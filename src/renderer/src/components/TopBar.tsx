@@ -10,6 +10,9 @@ export default function TopBar(): JSX.Element {
   const folders = useAppStore((s) => s.folders)
   const aiPanelVisible = useAppStore((s) => s.aiPanelVisible)
   const toggleAiPanel = useAppStore((s) => s.toggleAiPanel)
+  const theme = useAppStore((s) => s.settings.theme)
+  const setSettings = useAppStore((s) => s.setSettings)
+  const setCommandPalette = useAppStore((s) => s.setCommandPalette)
 
   const activeFolder = folders.find((f) => f.id === activeFolderId) ?? null
 
@@ -60,6 +63,20 @@ export default function TopBar(): JSX.Element {
 
       <div className="topbar-spacer" />
 
+      <button
+        className="topbar-icon-btn"
+        onClick={() => setCommandPalette(true)}
+        title="Command palette (Ctrl+Shift+P)"
+      >
+        ⌘
+      </button>
+      <button
+        className="topbar-icon-btn"
+        onClick={() => setSettings({ theme: theme === 'dark' ? 'light' : 'dark' })}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        {theme === 'dark' ? '☀️' : '🌙'}
+      </button>
       <button
         className={`topbar-door${aiPanelVisible ? ' open' : ''}`}
         onClick={toggleAiPanel}

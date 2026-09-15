@@ -3,6 +3,10 @@ import { registerIpcHandlers } from './ipc-handlers'
 import { createWindow, guardWebview } from './window'
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.yourname.brainstorm-app')
+  }
+
   registerIpcHandlers()
 
   // Apply navigation guards to any <webview> guest as it is created.

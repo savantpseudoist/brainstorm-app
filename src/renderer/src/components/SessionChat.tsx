@@ -19,7 +19,7 @@ interface Props {
  * context-menu actions are all scoped to THIS session.
  */
 export default function SessionChat({ session, isActive, preloadPath, onToast }: Props): JSX.Element {
-  const { webviewRef, isReady, sendOperation, onMessage, onUrl, navigateAndWait } = useWebviewBridge()
+  const { webviewRef, isReady, sendOperation, onMessage, onUrl, onAddToNotes, onSaveAsIdea, navigateAndWait } = useWebviewBridge()
 
   // Freeze the initial src so a captured URL change never remounts/reloads it.
   const [initialSrc] = useState(session.chatUrl ?? 'https://chatgpt.com/')
@@ -38,6 +38,28 @@ export default function SessionChat({ session, isActive, preloadPath, onToast }:
     return unsub
   }, [onUrl, session.id])
 
+  // Listen for in-page button clicks directly inside the ChatGPT site
+  useEffect(() => {
+    const unsubNotes = onAddToNotes((text) => {
+      const st = useAppStore.getState()
+      const current = st.sessions.find((s) => s.id === session.id)?.notes || ''
+      const next = current ? `${current}\n\n${text}` : text
+      st.setNotes(session.id, next)
+      flash('Appended raw Markdown from ChatGPT site to notes')
+    })
+    const unsubIdea = onSaveAsIdea((text) => {
+      const st = useAppStore.getState()
+      st.addIdea(session.id, { text, source: 'ai' })
+      flash('Saved Idea from ChatGPT site')
+    })
+    return () => {
+      unsubNotes()
+      unsubIdea()
+    }
+  }, [onAddToNotes, onSaveAsIdea, session.id, flash])
+
+  const pendingActionOriginalTextRef = useRef<string | null>(null)
+
   // Capture settled replies into this session's transcript (suppressed during
   // recovery, when replies are just "waiting" acknowledgements).
   useEffect(() => {
@@ -53,7 +75,32 @@ export default function SessionChat({ session, isActive, preloadPath, onToast }:
           timestamp: data.timestamp
         }
         st.addPendingResponse(response)
-        flash('Response received from ChatGPT')
+
+        if (pendingActionOriginalTextRef.current) {
+          st.setInlineSuggestion({
+            id: `sug_${Date.now()}`,
+            sessionId: session.id,
+            originalText: pendingActionOriginalTextRef.current,
+            suggestedText: data.text,
+            timestamp: data.timestamp
+          })
+          pendingActionOriginalTextRef.current = null
+        }
+
+        // Handle consolidation progression
+        const cs = st.consolidationState
+        if (cs && cs.active && cs.sessionId === session.id) {
+          if (cs.currentChunkIndex < cs.totalChunks - 1) {
+            st.advanceConsolidation()
+            flash(`Consolidating... Part ${cs.currentChunkIndex + 2} of ${cs.totalChunks}`)
+          } else {
+            st.setNotes(session.id, data.text)
+            st.cancelConsolidation()
+            flash('✨ Notes consolidated successfully!')
+          }
+        } else {
+          flash('Response received from ChatGPT')
+        }
       }
     })
     return unsubscribe
@@ -140,7 +187,8 @@ export default function SessionChat({ session, isActive, preloadPath, onToast }:
     if (!aiActionRequest || aiActionRequest.sessionId !== session.id) return
     if (handledAction.current === aiActionRequest.nonce) return
     handledAction.current = aiActionRequest.nonce
-    const { prompt } = aiActionRequest
+    const { prompt, originalText } = aiActionRequest as typeof aiActionRequest & { originalText?: string }
+    pendingActionOriginalTextRef.current = originalText || null
     useAppStore.getState().clearAiActionRequest()
     sendPrompt(prompt)
     // eslint-disable-next-line react-hooks/exhaustive-deps

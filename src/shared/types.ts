@@ -4,11 +4,14 @@
 // buttons in the AI panel.
 export type AIAction = 'brainstorm' | 'expand' | 'critique' | 'ask'
 
+export type SessionSort = 'recent' | 'alpha' | 'created'
+
 export interface AppSettings {
   theme: 'dark' | 'light'
   fontSize: number
   aiPanelWidth: number
   sidebarWidth: number
+  sessionSort?: SessionSort
 }
 
 // A captured idea — either something the user wrote or a response pulled out of
@@ -26,6 +29,23 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: number
+  bookmarked?: boolean
+}
+
+export interface InlineSuggestion {
+  id: string
+  sessionId: string
+  originalText: string
+  suggestedText: string
+  timestamp: number
+}
+
+export interface ConsolidationState {
+  sessionId: string
+  active: boolean
+  chunks: string[]
+  currentChunkIndex: number
+  totalChunks: number
 }
 
 // A work folder (Workspace). Brainstorms are grouped inside folders instead of
@@ -109,6 +129,8 @@ export interface DomBridgeErrorPayload {
 // The surface exposed to the renderer via contextBridge (see preload/index.ts).
 export interface ExposedApi {
   copyToClipboard: (text: string) => Promise<void>
+  /** Opens a native save dialog and writes `content`. Resolves true if saved. */
+  exportFile: (defaultName: string, content: string) => Promise<boolean>
   getPreloadPath: (scriptName: string) => Promise<string>
 
   storeGet: <K extends keyof StoreShape>(key: K) => Promise<StoreShape[K]>

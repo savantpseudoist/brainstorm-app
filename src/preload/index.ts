@@ -5,6 +5,8 @@ import type { ExposedApi, StoreShape } from '@shared/types'
 // Only these explicitly-listed capabilities are exposed to window.api.
 const api: ExposedApi = {
   copyToClipboard: (text) => ipcRenderer.invoke('clipboard:write', text),
+  exportFile: (defaultName, content) =>
+    ipcRenderer.invoke('app:exportFile', defaultName, content) as Promise<boolean>,
   getPreloadPath: (scriptName) => ipcRenderer.invoke('app:getPreloadPath', scriptName),
 
   storeGet: <K extends keyof StoreShape>(key: K) =>

@@ -5,6 +5,7 @@ const CHATGPT_ORIGIN = 'https://chatgpt.com'
 const CHATGPT_ALLOWED = ['https://chatgpt.com', 'https://auth.openai.com', 'https://cdn.oaistatic.com']
 
 export function createWindow(): BrowserWindow {
+  const iconPath = join(__dirname, '../../resources/icon.ico')
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -12,6 +13,7 @@ export function createWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: '#1e1e1e',
     title: 'Brainstorm',
+    icon: iconPath,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -223,13 +223,186 @@ function parseCodeBlocks(element: Element): CodeBlock[] {
   return blocks
 }
 
+/**
+ * Recursively converts ChatGPT's rendered HTML DOM tree back into authentic raw Markdown.
+ * Preserves headers (##), bold (**), italic (*), lists (- / 1.), blockquotes (>), links, and code blocks.
+ */
+function elementToMarkdown(element: Element): string {
+  function convertNode(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.textContent || ''
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+
+    const el = node as HTMLElement
+    if (el.classList.contains('brainstorm-injected-toolbar')) return ''
+
+    const tag = el.tagName.toLowerCase()
+
+    // Pre/code blocks
+    if (tag === 'pre') {
+      const codeEl = el.querySelector('code')
+      const langMatch = codeEl?.className.match(/language-(\w+)/)
+      const lang = langMatch ? langMatch[1] : ''
+      const codeText = codeEl ? codeEl.textContent : el.textContent
+      return `\n\n\`\`\`${lang}\n${(codeText || '').trim()}\n\`\`\`\n\n`
+    }
+    if (tag === 'code' && el.parentElement?.tagName.toLowerCase() !== 'pre') {
+      return `\`${el.textContent}\``
+    }
+
+    // Headings
+    if (/^h[1-6]$/.test(tag)) {
+      const level = parseInt(tag[1], 10)
+      const hashes = '#'.repeat(level)
+      const headingText = Array.from(el.childNodes).map(convertNode).join('').trim()
+      return `\n\n${hashes} ${headingText}\n\n`
+    }
+
+    // Paragraphs & Line breaks
+    if (tag === 'p') {
+      const paragraphText = Array.from(el.childNodes).map(convertNode).join('').trim()
+      return `\n\n${paragraphText}\n\n`
+    }
+    if (tag === 'br') return '\n'
+
+    // Bold & Italic
+    if (tag === 'strong' || tag === 'b') {
+      return `**${Array.from(el.childNodes).map(convertNode).join('')}**`
+    }
+    if (tag === 'em' || tag === 'i') {
+      return `*${Array.from(el.childNodes).map(convertNode).join('')}*`
+    }
+
+    // Blockquotes
+    if (tag === 'blockquote') {
+      const quoteText = Array.from(el.childNodes).map(convertNode).join('').trim()
+      return `\n\n> ${quoteText.replace(/\n/g, '\n> ')}\n\n`
+    }
+
+    // Lists
+    if (tag === 'ul' || tag === 'ol') {
+      const listItems = Array.from(el.children).filter((c) => c.tagName.toLowerCase() === 'li')
+      const items = listItems.map((li, i) => {
+        const prefix = tag === 'ol' ? `${i + 1}. ` : '- '
+        const itemText = Array.from(li.childNodes).map(convertNode).join('').trim()
+        return `${prefix}${itemText}`
+      })
+      return `\n\n${items.join('\n')}\n\n`
+    }
+
+    // Links
+    if (tag === 'a') {
+      const href = el.getAttribute('href') || ''
+      const text = Array.from(el.childNodes).map(convertNode).join('')
+      return href && text ? `[${text}](${href})` : text
+    }
+
+    return Array.from(el.childNodes).map(convertNode).join('')
+  }
+
+  const raw = convertNode(element)
+  return raw.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * Injects custom Brainstorm quick action buttons directly onto ChatGPT's frontend DOM
+ * underneath or inside native action bar (next to Copy / Share icons).
+ */
+function injectInPageActionButtons(): void {
+  // Find all assistant turn/message elements using multiple fallback selectors
+  const assistantNodes = document.querySelectorAll(
+    '[data-message-author-role="assistant"], div.markdown, article[data-testid*="turn"], [data-testid="conversation-turn-assistant"]'
+  )
+
+  assistantNodes.forEach((node) => {
+    // Find the enclosing message turn or assistant container
+    const turnEl = node.closest('article') || node.closest('[data-message-author-role="assistant"]') || node
+
+    // Avoid double injection in the same message turn
+    if (turnEl.querySelector('.brainstorm-injected-toolbar')) return
+
+    // Find the target container for button insertion: prefer the native action bar next to Copy/Share buttons
+    const nativeCopyBtn = turnEl.querySelector(
+      'button[data-testid="copy-turn-action-button"], button[aria-label*="Copy"], button[aria-label*="copy"]'
+    )
+    const targetParent = nativeCopyBtn?.parentElement || turnEl.querySelector('[data-testid="message-actions"]') || node
+
+    if (!targetParent) return
+
+    const toolbar = document.createElement('div')
+    toolbar.className = 'brainstorm-injected-toolbar'
+    toolbar.style.cssText = `
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      margin: 6px 4px !important;
+      padding: 4px 8px !important;
+      background: #2d2d30 !important;
+      border: 1px solid #4a4a4e !important;
+      border-radius: 6px !important;
+      font-family: system-ui, -apple-system, sans-serif !important;
+      font-size: 12px !important;
+      color: #ffffff !important;
+      z-index: 99999 !important;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    `
+
+    const btnCopy = document.createElement('button')
+    btnCopy.innerHTML = '📋 Copy Raw'
+    btnCopy.title = 'Copy authentic raw Markdown to clipboard'
+    btnCopy.style.cssText = 'background: transparent; border: none; color: #ffffff !important; cursor: pointer; padding: 2px 6px; font-size: 12px; font-weight: 500;'
+    btnCopy.onclick = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const md = elementToMarkdown(node)
+      void navigator.clipboard.writeText(md)
+      btnCopy.innerHTML = '✅ Copied'
+      setTimeout(() => (btnCopy.innerHTML = '📋 Copy Raw'), 2000)
+    }
+
+    const btnNotes = document.createElement('button')
+    btnNotes.innerHTML = '📝 Add to Notes'
+    btnNotes.title = 'Append raw Markdown to Brainstorm notes'
+    btnNotes.style.cssText = 'background: transparent; border: none; color: #ffffff !important; cursor: pointer; padding: 2px 6px; font-size: 12px; font-weight: 500;'
+    btnNotes.onclick = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const md = elementToMarkdown(node)
+      ipcRenderer.sendToHost('dom-bridge:add-to-notes', md)
+      btnNotes.innerHTML = '✅ Added'
+      setTimeout(() => (btnNotes.innerHTML = '📝 Add to Notes'), 2000)
+    }
+
+    const btnIdea = document.createElement('button')
+    btnIdea.innerHTML = '💡 Save Idea'
+    btnIdea.title = 'Save as single-line Idea item'
+    btnIdea.style.cssText = 'background: transparent; border: none; color: #ffffff !important; cursor: pointer; padding: 2px 6px; font-size: 12px; font-weight: 500;'
+    btnIdea.onclick = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const md = elementToMarkdown(node)
+      const firstLine = md.replace(/^#+\s+/gm, '').trim().split('\n')[0]
+      ipcRenderer.sendToHost('dom-bridge:save-as-idea', firstLine)
+      btnIdea.innerHTML = '✅ Saved'
+      setTimeout(() => (btnIdea.innerHTML = '💡 Save Idea'), 2000)
+    }
+
+    toolbar.appendChild(btnCopy)
+    toolbar.appendChild(btnNotes)
+    toolbar.appendChild(btnIdea)
+
+    if (nativeCopyBtn && nativeCopyBtn.parentElement) {
+      nativeCopyBtn.parentElement.appendChild(toolbar)
+    } else {
+      targetParent.appendChild(toolbar)
+    }
+  })
+}
+
 // --- Reply capture ---------------------------------------------------------
-//
-// We only capture an assistant reply after a prompt has been submitted, and
-// only once its text has stopped changing (settled). This fixes two problems:
-//   1. Emitting an empty/partial bubble while the reply is still streaming.
-//   2. Re-emitting old messages when an existing conversation is reloaded
-//      (reloads don't arm capture, so nothing fires).
 let awaitingReply = false
 let baselineAssistantCount = 0
 let lastSeenText = ''
@@ -255,7 +428,7 @@ function emitSettledReply(): void {
   const messages = assistantMessages()
   if (messages.length <= baselineAssistantCount) return
   const el = messages[messages.length - 1]
-  const text = (el.textContent || '').trim()
+  const text = elementToMarkdown(el)
   if (!text) return
 
   const payload: InboundPayload = {
@@ -268,26 +441,28 @@ function emitSettledReply(): void {
 }
 
 function onPossibleReplyChange(): void {
+  injectInPageActionButtons()
+
   if (!awaitingReply) return
   const messages = assistantMessages()
   if (messages.length <= baselineAssistantCount) return
   const el = messages[messages.length - 1]
-  const text = el.textContent || ''
-  if (text === lastSeenText) return
-
-  // Text is still growing — reset the settle timer. When it stops growing for a
-  // beat, streaming is done and we emit the final content exactly once.
-  lastSeenText = text
-  if (settleTimer) clearTimeout(settleTimer)
-  settleTimer = setTimeout(emitSettledReply, 1200)
+  const text = elementToMarkdown(el)
+  if (text === text && text !== lastSeenText) {
+    lastSeenText = text
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = setTimeout(emitSettledReply, 1200)
+  }
 }
 
 /**
- * Set up a MutationObserver that drives settle-based reply capture.
+ * Set up a MutationObserver that drives settle-based reply capture and in-page button injection.
  */
 function startMessageObserver(): void {
   const observer = new MutationObserver(() => onPossibleReplyChange())
   observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  injectInPageActionButtons()
+  setInterval(injectInPageActionButtons, 1000)
 }
 
 // --- Conversation URL tracking --------------------------------------------

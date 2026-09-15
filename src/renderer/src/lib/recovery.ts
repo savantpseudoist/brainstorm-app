@@ -20,8 +20,12 @@ export function wordCount(text: string): number {
 // Renders the saved transcript into the recovery template:
 // "I just lost a chat with you, here is context: I said '…', you replied '…', …"
 export function buildRecoveryTranscript(messages: ChatMessage[]): string {
-  const intro = 'I just lost a chat with you, here is context:'
-  const parts = messages.map((m) =>
+  const hasBookmarks = messages.some((m) => m.bookmarked)
+  const targetMessages = hasBookmarks ? messages.filter((m) => m.bookmarked) : messages
+  const intro = hasBookmarks
+    ? 'I just lost a chat with you, here is key bookmarked context from our conversation:'
+    : 'I just lost a chat with you, here is context:'
+  const parts = targetMessages.map((m) =>
     m.role === 'user'
       ? `I said '${m.content.trim()}'`
       : `you replied '${m.content.trim()}'`

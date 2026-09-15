@@ -66,16 +66,49 @@ export default function App(): JSX.Element {
       if (!loadedRef.current) return
       if (state.sessions !== prev.sessions) window.api.storeSet('sessions', state.sessions)
       if (state.folders !== prev.folders) window.api.storeSet('folders', state.folders)
+      if (state.settings !== prev.settings) window.api.storeSet('settings', state.settings)
     })
     return unsub
   }, [])
+
+  const sessions = useAppStore((s) => s.sessions)
+  const activeFolderId = useAppStore((s) => s.activeFolderId)
 
   const newSession = useCallback(() => useAppStore.getState().newSession(), [])
   const toggleAi = useCallback(() => useAppStore.getState().toggleAiPanel(), [])
 
   const commands: Command[] = [
-    { id: 'new-session', label: 'Brainstorm: New', run: newSession },
-    { id: 'toggle-ai', label: 'View: Toggle AI Panel', run: toggleAi }
+    { id: 'new-session', label: 'Brainstorm: New', hint: 'Ctrl+N', run: newSession },
+    { id: 'toggle-ai', label: 'View: Toggle AI Panel', run: toggleAi },
+    {
+      id: 'toggle-theme',
+      label: 'View: Toggle Light / Dark Theme',
+      run: () => {
+        const st = useAppStore.getState()
+        st.setSettings({ theme: st.settings.theme === 'dark' ? 'light' : 'dark' })
+      }
+    },
+    {
+      id: 'open-workspaces',
+      label: 'Workspace: Open Folder Selector',
+      run: () => useAppStore.getState().setFolderModal(true)
+    },
+    {
+      id: 'consolidate',
+      label: 'Notes: Consolidate with AI',
+      run: () => {
+        const st = useAppStore.getState()
+        if (st.activeSessionId) st.startConsolidation(st.activeSessionId)
+      }
+    },
+    ...sessions
+      .filter((s) => s.folderId === activeFolderId)
+      .map((s) => ({
+        id: `goto-${s.id}`,
+        label: `Go to: ${s.title || 'Untitled brainstorm'}`,
+        hint: `${s.ideas.length} ideas`,
+        run: () => useAppStore.getState().selectSession(s.id)
+      }))
   ]
 
   // Native menu actions from the main process.

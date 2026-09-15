@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { AIAction } from '@shared/types'
 import SessionChat from './SessionChat'
+import { buildBrainstormPrompt } from '../lib/prompt'
 import { useAppStore } from '../store/appStore'
+
+const QUICK_ACTIONS: { action: AIAction; label: string; title: string }[] = [
+  { action: 'brainstorm', label: '💡 Brainstorm', title: 'Generate fresh ideas around this topic' },
+  { action: 'expand', label: '➕ Expand notes', title: 'Expand on the most promising directions in your notes' },
+  { action: 'critique', label: '🔍 Critique', title: "Play devil's advocate on your notes" },
+  { action: 'ask', label: '💬 Send notes', title: 'Send your current notes to ChatGPT as context' }
+]
 
 export default function AIPanel(): JSX.Element {
   const [toast, setToast] = useState<string | null>(null)
   const [preloadPath, setPreloadPath] = useState<string | null>(null)
-  const [inboundCollapsed, setInboundCollapsed] = useState(false)
   const [visited, setVisited] = useState<string[]>([])
+  const [prompt, setPrompt] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const sessions = useAppStore((s) => s.sessions)
   const activeSessionId = useAppStore((s) => s.activeSessionId)
-  const setNotes = useAppStore((s) => s.setNotes)
-  const addIdea = useAppStore((s) => s.addIdea)
-  const pendingResponses = useAppStore((s) => s.pendingResponses)
-  const clearPendingResponse = useAppStore((s) => s.clearPendingResponse)
-  const clearAllPendingResponses = useAppStore((s) => s.clearAllPendingResponses)
+  const requestAiAction = useAppStore((s) => s.requestAiAction)
 
   const active = sessions.find((s) => s.id === activeSessionId) ?? null
 
@@ -35,20 +41,27 @@ export default function AIPanel(): JSX.Element {
     window.setTimeout(() => setToast(null), 2500)
   }, [])
 
-  const appendToNotes = (responseId: string, text: string): void => {
-    if (!active) return
-    const next = active.notes ? `${active.notes}\n\n${text}` : text
-    setNotes(active.id, next)
-    clearPendingResponse(responseId)
-    flash('Added to notes')
-  }
+  const sendFreeform = useCallback((): void => {
+    const text = prompt.trim()
+    if (!text || !active) return
+    requestAiAction(active.id, text)
+    setPrompt('')
+    flash('Sent to ChatGPT')
+  }, [prompt, active, requestAiAction, flash])
 
-  const saveAsIdea = (responseId: string, text: string): void => {
-    if (!active) return
-    addIdea(active.id, { text: text.trim(), source: 'ai' })
-    clearPendingResponse(responseId)
-    flash('Saved as idea')
-  }
+  const runQuickAction = useCallback(
+    (action: AIAction): void => {
+      if (!active) return
+      const built = buildBrainstormPrompt({
+        topic: active.title,
+        notes: active.notes,
+        action
+      })
+      requestAiAction(active.id, built)
+      flash(`Sent: ${action}`)
+    },
+    [active, requestAiAction, flash]
+  )
 
   const existingIds = new Set(sessions.map((s) => s.id))
   const mountedIds = visited.filter((id) => existingIds.has(id))
@@ -58,6 +71,22 @@ export default function AIPanel(): JSX.Element {
       <div className="ai-toolbar">
         <span className="ai-title">AI · {active ? active.title : 'no brainstorm'}</span>
       </div>
+
+      {active && (
+        <div className="ai-quickbar">
+          {QUICK_ACTIONS.map((q) => (
+            <button
+              key={q.action}
+              className="ai-quick-btn"
+              title={q.title}
+              disabled={q.action !== 'brainstorm' && !active.notes.trim()}
+              onClick={() => runQuickAction(q.action)}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="ai-webview-wrap">
         {preloadPath && mountedIds.length > 0 ? (
@@ -81,57 +110,35 @@ export default function AIPanel(): JSX.Element {
         {toast && <div className="ai-toast">{toast}</div>}
       </div>
 
-      {pendingResponses.length > 0 && (
-        <div className="ai-inbound">
-          <div className="ai-inbound-head">
-            <button
-              className="ai-inbound-toggle"
-              onClick={() => setInboundCollapsed((c) => !c)}
-              title={inboundCollapsed ? 'Expand' : 'Minimize'}
-            >
-              {inboundCollapsed ? '▸' : '▾'}
-            </button>
-            <span>Received responses ({pendingResponses.length})</span>
-            <button
-              className="ai-inbound-clear"
-              onClick={() => clearAllPendingResponses()}
-              title="Dismiss all"
-            >
-              Clear all
-            </button>
-          </div>
-          {!inboundCollapsed &&
-            pendingResponses.map((response) => (
-              <div key={response.id} className="ai-response">
-                <div className="ai-response-head">
-                  <span className="ai-response-time">
-                    {new Date(response.timestamp).toLocaleTimeString()}
-                  </span>
-                  <button
-                    className="ai-response-dismiss"
-                    onClick={() => clearPendingResponse(response.id)}
-                    title="Dismiss"
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="ai-response-text">{response.content.slice(0, 400)}</div>
-                <div className="ai-response-actions">
-                  <button onClick={() => appendToNotes(response.id, response.content)}>
-                    Add to notes
-                  </button>
-                  <button onClick={() => saveAsIdea(response.id, response.content)}>
-                    Save as idea
-                  </button>
-                </div>
-              </div>
-            ))}
+      {active && (
+        <div className="ai-composer">
+          <textarea
+            ref={inputRef}
+            className="ai-composer-input"
+            value={prompt}
+            placeholder="Ask ChatGPT…  (Enter to send, Shift+Enter for newline)"
+            rows={2}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                sendFreeform()
+              }
+            }}
+          />
+          <button
+            className="ai-composer-send"
+            onClick={sendFreeform}
+            disabled={!prompt.trim()}
+            title="Send to ChatGPT (Enter)"
+          >
+            ➤
+          </button>
         </div>
       )}
 
       <div className="ai-footnote">
-        Each brainstorm keeps its own ChatGPT panel. Highlight text in the notes and right-click for
-        Critique / Expand.
+        Highlight text in the notes and right-click for Critique / Expand, or use the buttons above.
       </div>
     </div>
   )
